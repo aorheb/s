@@ -11,11 +11,18 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 
+const flagCache = new Map<string, React.ComponentType<any>>();
+
 const loadFlagIcon = async (countryCode: string) => {
+  if (flagCache.has(countryCode)) {
+    return flagCache.get(countryCode)!;
+  }
+
   try {
     const flags = await import('country-flag-icons/react/3x2');
     const FlagComponent = flags[countryCode as keyof typeof flags];
     if (FlagComponent && typeof FlagComponent === 'function') {
+      flagCache.set(countryCode, FlagComponent);
       return FlagComponent;
     }
     return null;
@@ -25,28 +32,25 @@ const loadFlagIcon = async (countryCode: string) => {
 };
 
 const CountryFlag = memo(({ countryCode, className = "w-8 h-6" }: { countryCode: string; className?: string }) => {
-  const [FlagComponent, setFlagComponent] = useState<React.ComponentType<any> | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [FlagComponent, setFlagComponent] = useState<React.ComponentType<any> | null>(() => flagCache.get(countryCode) || null);
 
   useEffect(() => {
-    setIsLoading(true);
-    loadFlagIcon(countryCode)
-      .then((component) => {
-        if (component) {
-          setFlagComponent(() => component);
-        } else {
-          setFlagComponent(null);
-        }
-      })
-      .catch(() => {
-        setFlagComponent(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    if (flagCache.has(countryCode)) {
+      setFlagComponent(flagCache.get(countryCode)!);
+      return;
+    }
+
+    let mounted = true;
+    loadFlagIcon(countryCode).then((component) => {
+      if (mounted && component) {
+        setFlagComponent(() => component);
+      }
+    });
+
+    return () => { mounted = false; };
   }, [countryCode]);
 
-  if (isLoading || !FlagComponent) {
+  if (!FlagComponent) {
     return (
       <div className={`${className} bg-muted rounded flex items-center justify-center`}>
         <Icon name="globe" className="w-4 h-4 text-muted-foreground" />

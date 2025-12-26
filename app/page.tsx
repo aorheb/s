@@ -21,11 +21,18 @@ import {
   getAllDomains
 } from '@/lib/generator';
 
+const flagCache = new Map<string, React.ComponentType<any>>();
+
 const loadFlagIcon = async (countryCode: string) => {
+  if (flagCache.has(countryCode)) {
+    return flagCache.get(countryCode)!;
+  }
+
   try {
     const flags = await import('country-flag-icons/react/3x2');
     const FlagComponent = flags[countryCode as keyof typeof flags];
     if (FlagComponent && typeof FlagComponent === 'function') {
+      flagCache.set(countryCode, FlagComponent);
       return FlagComponent;
     }
     return null;
@@ -35,28 +42,25 @@ const loadFlagIcon = async (countryCode: string) => {
 };
 
 const CountryFlag = memo(({ countryCode, className = "w-8 h-6" }: { countryCode: string; className?: string }) => {
-  const [FlagComponent, setFlagComponent] = useState<React.ComponentType<any> | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [FlagComponent, setFlagComponent] = useState<React.ComponentType<any> | null>(() => flagCache.get(countryCode) || null);
 
   useEffect(() => {
-    setIsLoading(true);
-    loadFlagIcon(countryCode)
-      .then((component) => {
-        if (component) {
-          setFlagComponent(() => component);
-        } else {
-          setFlagComponent(null);
-        }
-      })
-      .catch(() => {
-        setFlagComponent(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    if (flagCache.has(countryCode)) {
+      setFlagComponent(flagCache.get(countryCode)!);
+      return;
+    }
+
+    let mounted = true;
+    loadFlagIcon(countryCode).then((component) => {
+      if (mounted && component) {
+        setFlagComponent(() => component);
+      }
+    });
+
+    return () => { mounted = false; };
   }, [countryCode]);
 
-  if (isLoading || !FlagComponent) {
+  if (!FlagComponent) {
     return (
       <div className={`${className} bg-muted rounded flex items-center justify-center`}>
         <Icon name="globe" className="w-4 h-4 text-muted-foreground" />
@@ -341,13 +345,17 @@ DomainList.displayName = 'DomainList';
 export default function HomePage() {
   const [selectedCountry, setSelectedCountry] = useState<CountryConfig>(countries[0]);
   const [selectedDomain, setSelectedDomain] = useState<string>('random');
-  const [userInfo, setUserInfo] = useState<UserInfo>({
-    firstName: '', lastName: '', birthday: '', phone: '', password: '', email: ''
+  const [userInfo, setUserInfo] = useState<UserInfo>(() => {
+    const { firstName, lastName } = generateName(countries[0].code);
+    const birthday = generateBirthday();
+    const phone = generatePhone(countries[0]);
+    const password = generatePassword();
+    const email = generateEmail(firstName, lastName);
+    return { firstName, lastName, birthday, phone, password, email };
   });
   const [showCountrySheet, setShowCountrySheet] = useState(false);
   const [showDomainSheet, setShowDomainSheet] = useState(false);
   const [ipInfo, setIpInfo] = useState({ ip: '...', country: 'US' });
-  const [isInitialized, setIsInitialized] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [inboxStatus, setInboxStatus] = useState<'idle' | 'opening'>('idle');
   const [showMenu, setShowMenu] = useState(false);
@@ -403,7 +411,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let isMounted = true;
-    const initializeApp = async () => {
+    const detectIP = async () => {
       try {
         const response = await fetch('/api/ip-info');
         const data = await response.json();
@@ -411,38 +419,29 @@ export default function HomePage() {
         setIpInfo({ ip: data.ip || '未知', country: data.country || 'US' });
         if (data.country && data.accurate) {
           const detectedCountry = getCountryConfig(data.country);
-          if (detectedCountry) setSelectedCountry(detectedCountry);
+          if (detectedCountry) {
+            setSelectedCountry(detectedCountry);
+            const { firstName, lastName } = generateName(detectedCountry.code);
+            const birthday = generateBirthday();
+            const phone = generatePhone(detectedCountry);
+            const password = generatePassword();
+            const customDomain = selectedDomain === 'random' ? undefined : selectedDomain;
+            const email = generateEmail(firstName, lastName, customDomain);
+            setUserInfo({ firstName, lastName, birthday, phone, password, email });
+          }
         }
-        setIsInitialized(true);
       } catch (error) {
         if (isMounted) {
-          setIpInfo({ ip: '检测失败', country: 'US' });
-          setIsInitialized(true);
+          setIpInfo({ ip: '未知', country: 'US' });
         }
       }
     };
-    initializeApp();
+    detectIP();
     return () => { isMounted = false; };
   }, []);
 
   useEffect(() => {
-    if (isInitialized && !userInfo.firstName) {
-      try {
-        const { firstName, lastName } = generateName(selectedCountry.code);
-        const birthday = generateBirthday();
-        const phone = generatePhone(selectedCountry);
-        const password = generatePassword();
-        const customDomain = selectedDomain === 'random' ? undefined : selectedDomain;
-        const email = generateEmail(firstName, lastName, customDomain);
-        setUserInfo({ firstName, lastName, birthday, phone, password, email });
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  }, [isInitialized, userInfo.firstName, selectedCountry, selectedDomain]);
-
-  useEffect(() => {
-    if (isInitialized && userInfo.firstName) generate();
+    if (userInfo.firstName) generate();
   }, [selectedCountry.code]);
 
   const allDomains = useMemo(() => getAllDomains(), []);
@@ -479,14 +478,7 @@ export default function HomePage() {
         </header>
 
         <main className="container max-w-3xl mx-auto px-4 py-8 space-y-6">
-          {!isInitialized ? (
-            <div className="flex flex-col items-center justify-center py-32 space-y-4">
-              <div className="w-8 h-8 border-2 border-muted border-t-primary rounded-full animate-spin" />
-              <p className="text-sm text-muted-foreground">正在初始化...</p>
-            </div>
-          ) : (
-            <>
-              <Card className="overflow-hidden">
+          <Card className="overflow-hidden">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">生成的身份信息</CardTitle>
                   <CardDescription>点击任意字段即可复制到剪贴板</CardDescription>
@@ -598,22 +590,20 @@ export default function HomePage() {
                 </CardContent>
               </Card>
 
-              <footer className="pt-4 text-center space-y-3">
-                <a
-                  href="https://t.me/fang180"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-medium transition-colors"
-                >
-                  <Icon name="link" className="w-4 h-4" />
-                  加入 Telegram 频道
-                </a>
-                <p className="text-xs text-muted-foreground">
-                  支持 {countries.length} 个国家/地区 • {allDomains.length} 个邮箱域名
-                </p>
-              </footer>
-            </>
-          )}
+          <footer className="pt-4 text-center space-y-3">
+            <a
+              href="https://t.me/fang180"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline font-medium transition-colors"
+            >
+              <Icon name="link" className="w-4 h-4" />
+              加入 Telegram 频道
+            </a>
+            <p className="text-xs text-muted-foreground">
+              支持 {countries.length} 个国家/地区 • {allDomains.length} 个邮箱域名
+            </p>
+          </footer>
         </main>
       </div>
 

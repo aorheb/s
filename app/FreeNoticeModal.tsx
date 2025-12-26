@@ -22,17 +22,16 @@ const getCookie = (name: string): string | null => {
 
 export const FreeNoticeModal = memo(() => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    const checkNoticeStatus = () => {
-      const shown = getCookie('freeNoticeShown');
-      if (shown !== 'true') {
+    setIsMounted(true);
+    const shown = getCookie('freeNoticeShown');
+    if (shown !== 'true') {
+      requestAnimationFrame(() => {
         setIsOpen(true);
-      }
-      setIsLoading(false);
-    };
-    checkNoticeStatus();
+      });
+    }
   }, []);
 
   const handleClose = useCallback(() => {
@@ -55,7 +54,7 @@ export const FreeNoticeModal = memo(() => {
     }
   }, [isOpen]);
 
-  if (isLoading || !isOpen) return null;
+  if (!isMounted || !isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
